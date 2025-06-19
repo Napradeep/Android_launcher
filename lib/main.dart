@@ -51,11 +51,6 @@ class _MyHomePageState extends State<MyHomePage> {
     List<Map<String, String>> installedApps;
     try {
       installedApps = await _flutterAndroidLauncherPlugin.getInstalledApps();
-      // Filter in  only Play Store
-      installedApps =
-          installedApps
-              .where((app) => app['packageName'] == 'com.android.vending')
-              .toList();
     } on PlatformException catch (e) {
       installedApps = [
         {
@@ -132,31 +127,59 @@ class _MyHomePageState extends State<MyHomePage> {
     }
   }
 
-  Future<void> _toggleQuietMode(String profile) async {
-    try {
-      final enableQuietMode = _quietModeStatus == 'Disabled';
-      await _flutterAndroidLauncherPlugin.requestQuietModeEnabled(
-        enableQuietMode,
-        profile,
-      );
-    } on PlatformException catch (e) {
-      setState(() {
-        _quietModeStatus = "Failed to toggle quiet mode: '${e.message}'";
-      });
-    }
+  void _showAllAppsBottomSheet(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.purple.shade300,
+
+      isScrollControlled: true,
+      builder: (_) {
+        return DraggableScrollableSheet(
+          initialChildSize: 0.85,
+          maxChildSize: 0.95,
+          minChildSize: 0.4,
+          expand: false,
+          builder: (context, scrollController) {
+            return GridView.builder(
+              controller: scrollController,
+              padding: const EdgeInsets.all(16),
+              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 4,
+                crossAxisSpacing: 16,
+                mainAxisSpacing: 16,
+                childAspectRatio: 0.75,
+              ),
+              itemCount: _installedApps.length,
+              itemBuilder: (context, index) {
+                final app = _installedApps[index];
+                final iconBase64 = app['iconBase64']!;
+                final iconWidget =
+                    _iconCache.containsKey(iconBase64)
+                        ? Image.memory(_iconCache[iconBase64]!)
+                        : Image.memory(base64Decode(iconBase64));
+                return GestureDetector(
+                  onTap: () => _launchApp(app['packageName']!, app['profile']!),
+                  child: _buildAppIcon(iconWidget, app['appName']),
+                );
+              },
+            );
+          },
+        );
+      },
+    );
   }
 
   @override
+  @override
   void initState() {
+    super.initState();
     _getInstalledApps();
     _getLauncherUserInfo().then((_) {
       if (_privateProfile != null) {
         _checkQuietMode(_privateProfile!);
       }
     });
-    _flutterAndroidLauncherPlugin.setMethodCallHandler((
-      FlutterAndroidLauncherMethodCall call,
-    ) async {
+    _flutterAndroidLauncherPlugin.setMethodCallHandler((call) async {
       if (call.method == "updateQuietModeStatus") {
         final isQuietModeEnabled = call.arguments as bool;
         setState(() {
@@ -164,98 +187,102 @@ class _MyHomePageState extends State<MyHomePage> {
         });
       }
     });
-    super.initState();
   }
 
   @override
   Widget build(BuildContext context) {
+    final playStoreApp = _installedApps.firstWhereOrNull(
+      (app) => app['packageName'] == 'com.android.vending',
+    );
+
     return Scaffold(
       backgroundColor: Colors.transparent,
-
       body: SafeArea(
-        child: Center(
-          child: DefaultTextStyle(
-            style: const TextStyle(color: Colors.white),
-            child: Column(
-              children: [
-                if (_privateProfile != null)
-                  Text('Quiet Mode: $_quietModeStatus'),
-                _userProfiles.isEmpty
-                    ? const CircularProgressIndicator()
-                    : const SizedBox(),
-                Expanded(
-                  child: LayoutBuilder(
-                    builder: (context, constraints) {
-                      return Stack(
-                        clipBehavior: Clip.none,
-                        children: [
-                          ...List.generate(_installedApps.length, (index) {
-                            final app = _installedApps[index];
-                            final iconBase64 = app['iconBase64']!;
-                            final iconWidget =
-                                _iconCache.containsKey(iconBase64)
-                                    ? Image.memory(_iconCache[iconBase64]!)
-                                    : Image.memory(base64Decode(iconBase64));
-                            final position =
-                                _positions[index] ??
-                                Offset(
-                                  (index % 4) * 90.0,
-                                  (index ~/ 4) * 100.0,
-                                );
+        child: Column(
+          children: [
+            if (_privateProfile != null)
+              Text(
+                'Quiet Mode: $_quietModeStatus',
+                style: const TextStyle(color: Colors.white),
+              ),
+            Expanded(
+              child:
+                  playStoreApp == null
+                      ? const Center(child: CircularProgressIndicator())
+                      : LayoutBuilder(
+                        builder: (context, constraints) {
+                          return Stack(
+                            clipBehavior: Clip.none,
+                            children: [
+                              // Only show the Play Store icon with drag-and-drop
+                              ...List.generate(1, (index) {
+                                final iconBase64 = playStoreApp!['iconBase64']!;
+                                final iconWidget =
+                                    _iconCache.containsKey(iconBase64)
+                                        ? Image.memory(_iconCache[iconBase64]!)
+                                        : Image.memory(
+                                          base64Decode(iconBase64),
+                                        );
+                                final position =
+                                    _positions[index] ?? const Offset(100, 200);
 
-                            return Positioned(
-                              left: position.dx,
-                              top: position.dy,
-                              child: Draggable<int>(
-                                data: index,
-                                feedback: Material(
-                                  color: Colors.transparent,
-                                  child: _buildAppIcon(
-                                    iconWidget,
-                                    app['appName'],
-                                  ),
-                                ),
-                                childWhenDragging: const Opacity(
-                                  opacity: 0.3,
-                                  child: Icon(Icons.apps, size: 48),
-                                ),
-                                onDraggableCanceled: (velocity, offset) {
-                                  setState(() {
-                                    _positions[index] = offset;
-                                  });
-                                },
-                                child: GestureDetector(
-                                  onTap:
-                                      () => _launchApp(
-                                        app['packageName']!,
-                                        app['profile']!,
+                                return Positioned(
+                                  left: position.dx,
+                                  top: position.dy,
+                                  child: Draggable<int>(
+                                    data: index,
+                                    feedback: Material(
+                                      color: Colors.transparent,
+                                      child: _buildAppIcon(
+                                        iconWidget,
+                                        playStoreApp!['appName'],
                                       ),
-                                  child: _buildAppIcon(
-                                    iconWidget,
-                                    app['appName'],
+                                    ),
+                                    childWhenDragging: const Opacity(
+                                      opacity: 0.3,
+                                      child: Icon(Icons.apps, size: 48),
+                                    ),
+                                    onDraggableCanceled: (velocity, offset) {
+                                      setState(() {
+                                        _positions[index] = offset;
+                                      });
+                                    },
+                                    child: GestureDetector(
+                                      onTap:
+                                          () => _launchApp(
+                                            playStoreApp!['packageName']!,
+                                            playStoreApp!['profile']!,
+                                          ),
+                                      child: _buildAppIcon(
+                                        iconWidget,
+                                        playStoreApp!['appName'],
+                                      ),
+                                    ),
                                   ),
-                                ),
-                              ),
-                            );
-                          }),
-                        ],
-                      );
-                    },
+                                );
+                              }),
+                            ],
+                          );
+                        },
+                      ),
+            ),
+
+            InkWell(
+              onTap: () => _showAllAppsBottomSheet(context),
+              child: Container(
+                height: 60,
+                color: Colors.white10,
+                alignment: Alignment.center,
+                child: const Text(
+                  'Tap Here to View All Apps',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
                   ),
                 ),
-
-                if (_privateProfile != null)
-                  ElevatedButton(
-                    onPressed: () => _toggleQuietMode(_privateProfile!),
-                    child: Text(
-                      _quietModeStatus == 'Enabled'
-                          ? 'Disable Quiet Mode'
-                          : 'Enable Quiet Mode',
-                    ),
-                  ),
-              ],
+              ),
             ),
-          ),
+          ],
         ),
       ),
     );
@@ -265,8 +292,8 @@ class _MyHomePageState extends State<MyHomePage> {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        SizedBox(width: 48, height: 48, child: iconWidget),
-        const SizedBox(height: 4),
+        SizedBox(width: 64, height: 64, child: iconWidget),
+        const SizedBox(height: 6),
         Text(
           name ?? '',
           style: const TextStyle(color: Colors.white, fontSize: 12),
